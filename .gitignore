@@ -1,2 +1,19 @@
-google-credentials.json 
+# Credentials — NEVER commit these
 google-credentials.json
+user-settings.json
+*.json.bak
+
+# Build output
+bin/
+obj/
+
+# .NET
+*.user
+*.suo
+.vs/
+*.log
+
+# Environment
+.env
+.env.*
+appsettings.Development.json
