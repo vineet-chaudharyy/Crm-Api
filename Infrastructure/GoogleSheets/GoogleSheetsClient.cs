@@ -106,13 +106,20 @@ public class GoogleSheetsClient
 
             GoogleCredential credential;
 
-            // Priority 1 — credentials JSON pasted via Settings UI (stored in user-settings.json)
+            // Priority 1 — credentials JSON pasted via Settings UI (user-settings.json)
+            // Priority 2 — credentials JSON set via Azure App Settings (GoogleSheets__CredentialsJson)
             var credJson = _settingsService.GetCredentialsJson();
+            if (string.IsNullOrWhiteSpace(credJson) && !string.IsNullOrWhiteSpace(_opt.CredentialsJson))
+            {
+                credJson = _opt.CredentialsJson;
+                _logger.LogInformation("Using credentials from Azure App Settings (GoogleSheets__CredentialsJson).");
+            }
+
             if (!string.IsNullOrWhiteSpace(credJson))
             {
                 credential = GoogleCredential.FromJson(credJson)
                     .CreateScoped(SheetsService.Scope.Spreadsheets);
-                _logger.LogInformation("Using credentials from user-settings (UI-configured).");
+                _logger.LogInformation("Using credentials JSON (UI or Azure App Settings).");
             }
             else
             {

@@ -13,6 +13,13 @@ public class GoogleSheetsOptions
     /// <summary>Path to the service-account JSON key (shared across all sheets).</summary>
     public string CredentialsPath { get; set; } = "google-credentials.json";
 
+    /// <summary>
+    /// Full JSON content of the service-account key.
+    /// Set this via Azure App Settings as GoogleSheets__CredentialsJson
+    /// (double underscore). Takes priority over CredentialsPath.
+    /// </summary>
+    public string? CredentialsJson { get; set; }
+
     // ── Tab names ────────────────────────────────────────────────────────────
     public string LeadsTab { get; set; } = "Leads";
     public string EmployeesTab { get; set; } = "Employees";
