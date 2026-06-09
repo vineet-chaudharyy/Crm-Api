@@ -94,6 +94,17 @@ public class GoogleSheetsClient
     public string EffectiveSpreadsheetId =>
         _settingsService.GetSpreadsheetId(_opt.SpreadsheetId);
 
+    /// <summary>
+    /// Resolves the spreadsheet ID for a specific entity.
+    /// If the entity has its own override ID → use it.
+    /// Otherwise → use EffectiveSpreadsheetId (which picks up UI-saved settings).
+    /// Always call this as a property (not in constructor) so UI changes are reflected.
+    /// </summary>
+    public string ResolveSheetId(string? entitySpecificId) =>
+        string.IsNullOrWhiteSpace(entitySpecificId)
+            ? EffectiveSpreadsheetId
+            : entitySpecificId;
+
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     private async Task<SheetsService> ServiceAsync(CancellationToken ct)
@@ -224,22 +235,41 @@ public class GoogleSheetsClient
         finally { _bootstrapGate.Release(); }
     }
 
+    // ── Tab discovery ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns all tab names in a spreadsheet that are NOT in the systemTabs set.
+    /// Used by FacebookSyncService to auto-detect ad/lead tabs.
+    /// </summary>
+    public async Task<List<string>> GetNonSystemTabsAsync(
+        string spreadsheetId,
+        HashSet<string> systemTabs,
+        CancellationToken ct = default)
+    {
+        var service  = await ServiceAsync(ct);
+        var meta     = await service.Spreadsheets.Get(spreadsheetId).ExecuteAsync(ct);
+        return meta.Sheets
+            .Select(s => s.Properties.Title)
+            .Where(t => !systemTabs.Contains(t))
+            .ToList();
+    }
+
     // ── Per-entity convenience methods ────────────────────────────────────────
 
     public Task EnsureLeadsSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(_opt.Leads, new[] { (_opt.LeadsTab, LeadHeader) }, ct);
+        EnsureSchemaAsync(ResolveSheetId(_opt.LeadsSpreadsheetId), new[] { (_opt.LeadsTab, LeadHeader) }, ct);
 
     public Task EnsureEmployeesSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(_opt.Employees, new[] { (_opt.EmployeesTab, EmployeeHeader) }, ct);
+        EnsureSchemaAsync(ResolveSheetId(_opt.EmployeesSpreadsheetId), new[] { (_opt.EmployeesTab, EmployeeHeader) }, ct);
 
     public Task EnsureActivitySchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(_opt.Activity, new[] { (_opt.ActivityTab, ActivityHeader) }, ct);
+        EnsureSchemaAsync(ResolveSheetId(_opt.ActivitySpreadsheetId), new[] { (_opt.ActivityTab, ActivityHeader) }, ct);
 
     public Task EnsureRemindersSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(_opt.Reminders, new[] { (_opt.RemindersTab, ReminderHeader) }, ct);
+        EnsureSchemaAsync(ResolveSheetId(_opt.RemindersSpreadsheetId), new[] { (_opt.RemindersTab, ReminderHeader) }, ct);
 
     public Task EnsureMetaEventsSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(_opt.MetaEvents, new[] { (_opt.MetaEventsTab, MetaEventHeader) }, ct);
+        EnsureSchemaAsync(ResolveSheetId(_opt.MetaEventsSpreadsheetId), new[] { (_opt.MetaEventsTab, MetaEventHeader) }, ct);
 
     // ── Tab GID helper ────────────────────────────────────────────────────────
 

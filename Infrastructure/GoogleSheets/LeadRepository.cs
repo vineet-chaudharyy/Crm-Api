@@ -7,21 +7,24 @@ namespace Crm_Api.Infrastructure.GoogleSheets;
 public class LeadRepository : ILeadRepository
 {
     private readonly GoogleSheetsClient _client;
-    private readonly string _sheetId;   // ← may differ from default if configured
+    private readonly string? _entitySheetId; // per-entity override (null = use effective default)
     private readonly string _tab;
     private const int ColCount = 14; // A..N
+
+    // Always evaluated fresh — picks up SpreadsheetId saved via Settings UI
+    private string SheetId => _client.ResolveSheetId(_entitySheetId);
 
     public LeadRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
     {
         _client = client;
-        _sheetId = opt.Value.Leads;   // resolves override → default
+        _entitySheetId = opt.Value.LeadsSpreadsheetId; // null/empty = use default
         _tab = opt.Value.LeadsTab;
     }
 
     public async Task<List<Lead>> GetAllAsync(CancellationToken ct = default)
     {
         await _client.EnsureLeadsSchemaAsync(ct);
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:N", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:N", ct);
         var leads = new List<Lead>();
         for (var i = 0; i < rows.Count; i++)
         {
@@ -46,7 +49,7 @@ public class LeadRepository : ILeadRepository
         if (string.IsNullOrWhiteSpace(lead.DateAdded))
             lead.DateAdded = DateTime.UtcNow.ToString("yyyy-MM-dd");
         lead.LastUpdated = now;
-        lead.RowNumber = await _client.AppendAsync(_sheetId, _tab, ToRow(lead), ct);
+        lead.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(lead), ct);
         return lead;
     }
 
@@ -59,7 +62,7 @@ public class LeadRepository : ILeadRepository
         lead.DateAdded = string.IsNullOrWhiteSpace(lead.DateAdded) ? existing.DateAdded : lead.DateAdded;
         lead.LastUpdated = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
-        await _client.OverwriteAsync(_sheetId, _tab, $"A{existing.RowNumber}",
+        await _client.OverwriteAsync(SheetId, _tab, $"A{existing.RowNumber}",
             new List<IList<object>> { ToRow(lead) }, ct);
         return true;
     }
@@ -68,7 +71,7 @@ public class LeadRepository : ILeadRepository
     {
         var existing = await GetByIdAsync(leadId, ct);
         if (existing is null) return false;
-        await _client.DeleteRowAsync(_sheetId, _tab, existing.RowNumber, ct);
+        await _client.DeleteRowAsync(SheetId, _tab, existing.RowNumber, ct);
         return true;
     }
 
@@ -76,7 +79,7 @@ public class LeadRepository : ILeadRepository
 
     private async Task<string> NextLeadIdAsync(CancellationToken ct)
     {
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:A", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:A", ct);
         var max = 0;
         foreach (var r in rows)
         {

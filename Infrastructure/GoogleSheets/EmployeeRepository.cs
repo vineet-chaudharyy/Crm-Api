@@ -1,4 +1,4 @@
-using Crm_Api.Application.Interfaces;
+﻿using Crm_Api.Application.Interfaces;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -7,20 +7,21 @@ namespace Crm_Api.Infrastructure.GoogleSheets;
 public class EmployeeRepository : IEmployeeRepository
 {
     private readonly GoogleSheetsClient _client;
-    private readonly string _sheetId;
+    private readonly string? _entitySheetId;
+    private string SheetId => _client.ResolveSheetId(_entitySheetId);
     private readonly string _tab;
 
     public EmployeeRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
     {
         _client = client;
-        _sheetId = opt.Value.Employees;
+        _entitySheetId = opt.Value.EmployeesSpreadsheetId;
         _tab = opt.Value.EmployeesTab;
     }
 
     public async Task<List<Employee>> GetAllAsync(CancellationToken ct = default)
     {
         await _client.EnsureEmployeesSchemaAsync(ct);
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:G", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:G", ct);
         var list = new List<Employee>();
         for (var i = 0; i < rows.Count; i++)
         {
@@ -53,7 +54,7 @@ public class EmployeeRepository : IEmployeeRepository
         if (string.IsNullOrWhiteSpace(emp.CreatedDate)) emp.CreatedDate = existing.CreatedDate;
         if (string.IsNullOrWhiteSpace(emp.PasswordHash)) emp.PasswordHash = existing.PasswordHash;
 
-        await _client.OverwriteAsync(_sheetId, _tab, $"A{existing.RowNumber}",
+        await _client.OverwriteAsync(SheetId, _tab, $"A{existing.RowNumber}",
             new List<IList<object>> { ToRow(emp) }, ct);
         return true;
     }
@@ -64,13 +65,13 @@ public class EmployeeRepository : IEmployeeRepository
         e.EmployeeId = await NextEmployeeIdAsync(ct);
         if (string.IsNullOrWhiteSpace(e.CreatedDate))
             e.CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        e.RowNumber = await _client.AppendAsync(_sheetId, _tab, ToRow(e), ct);
+        e.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(e), ct);
         return e;
     }
 
     private async Task<string> NextEmployeeIdAsync(CancellationToken ct)
     {
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:A", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:A", ct);
         var max = 0;
         foreach (var r in rows)
         {
@@ -102,3 +103,4 @@ public class EmployeeRepository : IEmployeeRepository
         e.Active ? "TRUE" : "FALSE", e.CreatedDate
     };
 }
+

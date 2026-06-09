@@ -5,24 +5,22 @@ using Crm_Api.Infrastructure.GoogleSheets;
 namespace Crm_Api.Application.Services;
 
 /// <summary>
-/// Syncs leads from the "Video Ad" Google Sheet tab into the CRM Leads tab.
-///
-/// Column layout (0-based index):
-///  0=id  1=created_time  3=ad_name  12=which_service  13=business_name
-///  14=full_name  15=phone  16=email  17=lead_status  18=follow_up  19=date  20=time
-///
-/// Rules:
-///  • New rows   → imported as CRM leads (dedup by phone OR fb id in Notes)
-///  • Rows gone  → matching CRM leads marked status="Deleted"
+/// Syncs leads from ALL non-CRM tabs in Google Sheets.
+/// Auto-detects any tab that has lead-like columns (phone/email/name).
+/// Supports any Facebook Lead Ads export format regardless of tab name.
 /// </summary>
 public class FacebookSyncService
 {
+    // These tabs belong to the CRM itself — never sync FROM them
+    private static readonly HashSet<string> SystemTabs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Leads", "Employees", "Activity", "Reminders", "MetaEvents"
+    };
+
     private readonly GoogleSheetsClient _sheets;
     private readonly ILeadRepository _leads;
     private readonly IActivityLogRepository _activity;
     private readonly ILogger<FacebookSyncService> _logger;
-
-    public const string SourceTab = "Video Ad";
 
     public FacebookSyncService(
         GoogleSheetsClient sheets,
@@ -40,34 +38,33 @@ public class FacebookSyncService
     {
         var spreadsheetId = _sheets.EffectiveSpreadsheetId;
 
-        // ── Read source tab ───────────────────────────────────────────────────
-        IList<IList<object>> rows;
+        // ── Discover all non-CRM tabs ─────────────────────────────────────────
+        List<string> adTabs;
         try
         {
-            rows = await _sheets.ReadAsync(spreadsheetId, SourceTab, "A2:U", ct);
+            adTabs = await GetAdTabsAsync(spreadsheetId, ct);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "FacebookSyncService: could not read '{Tab}' tab.", SourceTab);
+            _logger.LogError(ex, "FacebookSyncService: could not list sheet tabs.");
             return (0, 0, 0);
         }
 
-        // Build lookup: fbId → row data
-        var sheetById = new Dictionary<string, IList<object>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in rows)
+        if (adTabs.Count == 0)
         {
-            var fbId = Col(row, 0);
-            if (!string.IsNullOrWhiteSpace(fbId))
-                sheetById[fbId] = row;
+            _logger.LogInformation("FacebookSyncService: no ad tabs found to sync.");
+            return (0, 0, 0);
         }
 
-        // ── Load existing CRM leads ───────────────────────────────────────────
+        _logger.LogInformation("FacebookSyncService: found {N} ad tab(s): {Tabs}",
+            adTabs.Count, string.Join(", ", adTabs));
+
+        // ── Load existing CRM leads once ──────────────────────────────────────
         var existing      = await _leads.GetAllAsync(ct);
         var existingPhones = new HashSet<string>(
             existing.Select(l => NormaliseDigits(l.MobileNumber ?? "")),
             StringComparer.OrdinalIgnoreCase);
 
-        // Map fbId → CRM lead (for delete detection)
         var crmByFbId = new Dictionary<string, Lead>(StringComparer.OrdinalIgnoreCase);
         foreach (var lead in existing)
         {
@@ -76,84 +73,118 @@ public class FacebookSyncService
                 crmByFbId[fbId] = lead;
         }
 
-        int added = 0, deleted = 0, skipped = 0;
+        int totalAdded = 0, totalDeleted = 0, totalSkipped = 0;
+        var allSheetFbIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // ── Import NEW leads ──────────────────────────────────────────────────
-        foreach (var row in rows)
+        // ── Process each ad tab ───────────────────────────────────────────────
+        foreach (var tabName in adTabs)
         {
-            var fbId     = Col(row, 0);
-            var phone    = Col(row, 15);
-            var normPhone = NormaliseDigits(phone);
-
-            // Skip duplicates
-            if ((!string.IsNullOrWhiteSpace(fbId)     && crmByFbId.ContainsKey(fbId)) ||
-                (!string.IsNullOrWhiteSpace(normPhone) && existingPhones.Contains(normPhone)))
+            IList<IList<object>> rows;
+            try
             {
-                skipped++;
+                rows = await _sheets.ReadAsync(spreadsheetId, tabName, "A1:ZZ", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read tab '{Tab}' — skipping.", tabName);
                 continue;
             }
 
-            var fullName = Col(row, 14);
-            if (string.IsNullOrWhiteSpace(fullName) && string.IsNullOrWhiteSpace(phone))
+            if (rows.Count < 2) continue; // header + at least 1 data row needed
+
+            // Detect column positions from header row
+            var colMap = DetectColumns(rows[0]);
+            if (!colMap.HasLeadData)
             {
-                skipped++; continue;
+                _logger.LogInformation("Tab '{Tab}' has no recognisable lead columns — skipping.", tabName);
+                continue;
             }
 
-            var createdTime  = Col(row, 1);
-            var adName       = Col(row, 3);
-            var service      = Col(row, 12);
-            var businessName = Col(row, 13);
-            var email        = Col(row, 16);
-            var fbStatus     = Col(row, 17);
-            var followUp     = Col(row, 18);
-            var followDate   = Col(row, 19);
-            var followTime   = Col(row, 20);
+            _logger.LogInformation("Syncing tab '{Tab}' — columns: name={N} phone={P} email={E}",
+                tabName, colMap.FullName, colMap.Phone, colMap.Email);
 
-            var dateAdded = DateTime.TryParse(createdTime, out var dt)
-                ? dt.ToString("yyyy-MM-dd HH:mm:ss")
-                : DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-
-            var status = MapStatus(fbStatus);
-
-            var followUpDate = "";
-            if (!string.IsNullOrWhiteSpace(followDate))
-                followUpDate = string.IsNullOrWhiteSpace(followTime) ? followDate : $"{followDate} {followTime}";
-            else if (!string.IsNullOrWhiteSpace(followUp))
-                followUpDate = followUp;
-
-            var notesParts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(service)) notesParts.Add($"Service: {service}");
-            if (!string.IsNullOrWhiteSpace(fbId))    notesParts.Add($"FB: {fbId}");
-
-            var lead = new Lead
+            // Process data rows (skip header)
+            for (var i = 1; i < rows.Count; i++)
             {
-                FullName         = string.IsNullOrWhiteSpace(fullName) ? "Unknown" : fullName,
-                MobileNumber     = phone,
-                EmailAddress     = email,
-                CompanyName      = businessName,
-                LeadSource       = string.IsNullOrWhiteSpace(adName) ? "Facebook" : $"Facebook - {adName}",
-                Status           = status,
-                FollowUpDate     = followUpDate,
-                AssignedEmployee = "",
-                Notes            = string.Join(" | ", notesParts),
-                DateAdded        = dateAdded,
-                City             = "",
-                State            = "",
-            };
+                var row = rows[i];
+                string Col(int idx) => idx >= 0 && idx < row.Count ? (row[idx]?.ToString() ?? "").Trim() : "";
 
-            var created = await _leads.AddAsync(lead, ct);
+                var fbId      = Col(colMap.Id);
+                var phone     = Col(colMap.Phone);
+                var normPhone = NormaliseDigits(phone);
 
-            if (!string.IsNullOrWhiteSpace(normPhone)) existingPhones.Add(normPhone);
-            if (!string.IsNullOrWhiteSpace(fbId))      crmByFbId[fbId] = created;
-            added++;
+                if (!string.IsNullOrWhiteSpace(fbId)) allSheetFbIds.Add(fbId);
+
+                // Dedup
+                if ((!string.IsNullOrWhiteSpace(fbId)     && crmByFbId.ContainsKey(fbId)) ||
+                    (!string.IsNullOrWhiteSpace(normPhone) && existingPhones.Contains(normPhone)))
+                {
+                    totalSkipped++;
+                    continue;
+                }
+
+                var fullName = Col(colMap.FullName);
+                if (string.IsNullOrWhiteSpace(fullName) && string.IsNullOrWhiteSpace(phone))
+                {
+                    totalSkipped++; continue;
+                }
+
+                var createdTime  = Col(colMap.CreatedTime);
+                var adName       = Col(colMap.AdName);
+                var service      = Col(colMap.Service);
+                var businessName = Col(colMap.BusinessName);
+                var email        = Col(colMap.Email);
+                var fbStatus     = Col(colMap.Status);
+                var followUp     = Col(colMap.FollowUp);
+                var followDate   = Col(colMap.FollowDate);
+                var followTime   = Col(colMap.FollowTime);
+
+                var dateAdded = DateTime.TryParse(createdTime, out var dt)
+                    ? dt.ToString("yyyy-MM-dd HH:mm:ss")
+                    : DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+                var status = MapStatus(fbStatus);
+
+                var followUpDate = "";
+                if (!string.IsNullOrWhiteSpace(followDate))
+                    followUpDate = string.IsNullOrWhiteSpace(followTime) ? followDate : $"{followDate} {followTime}";
+                else if (!string.IsNullOrWhiteSpace(followUp))
+                    followUpDate = followUp;
+
+                var notesParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(service)) notesParts.Add($"Service: {service}");
+                if (!string.IsNullOrWhiteSpace(fbId))    notesParts.Add($"FB: {fbId}");
+                notesParts.Add($"Ad Tab: {tabName}");
+
+                var lead = new Lead
+                {
+                    FullName         = string.IsNullOrWhiteSpace(fullName) ? "Unknown" : fullName,
+                    MobileNumber     = phone,
+                    EmailAddress     = email,
+                    CompanyName      = businessName,
+                    LeadSource       = string.IsNullOrWhiteSpace(adName) ? $"Facebook - {tabName}" : $"Facebook - {adName}",
+                    Status           = status,
+                    FollowUpDate     = followUpDate,
+                    AssignedEmployee = "",
+                    Notes            = string.Join(" | ", notesParts),
+                    DateAdded        = dateAdded,
+                    City             = "",
+                    State            = "",
+                };
+
+                var created = await _leads.AddAsync(lead, ct);
+
+                if (!string.IsNullOrWhiteSpace(normPhone)) existingPhones.Add(normPhone);
+                if (!string.IsNullOrWhiteSpace(fbId))      crmByFbId[fbId] = created;
+                totalAdded++;
+            }
         }
 
-        // ── Mark DELETED leads ────────────────────────────────────────────────
-        // Any CRM lead with a FB: id that is no longer in the sheet → "Deleted"
+        // ── Mark DELETED — FB ids no longer in ANY ad tab ────────────────────
         foreach (var (fbId, lead) in crmByFbId)
         {
-            if (sheetById.ContainsKey(fbId)) continue;                         // still in sheet ✓
-            if (lead.Status.Equals("Deleted", StringComparison.OrdinalIgnoreCase)) continue; // already deleted
+            if (allSheetFbIds.Contains(fbId)) continue;
+            if (lead.Status.Equals("Deleted", StringComparison.OrdinalIgnoreCase)) continue;
 
             lead.Status      = "Deleted";
             lead.LastUpdated = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
@@ -167,30 +198,66 @@ public class FacebookSyncService
                 Details = $"Lead '{lead.FullName}' removed from Facebook sheet → marked Deleted"
             }, ct);
 
-            deleted++;
+            totalDeleted++;
         }
 
         _logger.LogInformation(
-            "FacebookSync: +{Added} new, {Deleted} deleted, {Skipped} skipped.",
-            added, deleted, skipped);
+            "FacebookSync: +{A} new, {D} deleted, {S} skipped across {T} tab(s).",
+            totalAdded, totalDeleted, totalSkipped, adTabs.Count);
 
-        if (added > 0 || deleted > 0)
+        if (totalAdded > 0 || totalDeleted > 0)
         {
             await _activity.LogAsync(new ActivityLog
             {
                 User    = "System",
                 Action  = "Facebook Sync",
-                Details = $"Auto-sync: {added} new leads imported, {deleted} marked Deleted, {skipped} duplicates skipped."
+                Details = $"Auto-sync ({adTabs.Count} tabs): {totalAdded} new, {totalDeleted} deleted, {totalSkipped} skipped."
             }, ct);
         }
 
-        return (added, deleted, skipped);
+        return (totalAdded, totalDeleted, totalSkipped);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Get all non-CRM tabs from the spreadsheet ─────────────────────────────
 
-    private static string Col(IList<object> row, int i) =>
-        i < row.Count ? (row[i]?.ToString() ?? "").Trim() : "";
+    private async Task<List<string>> GetAdTabsAsync(string spreadsheetId, CancellationToken ct)
+    {
+        // Use the public ReadAsync with a dummy range just to trigger auth,
+        // then use the sheets metadata endpoint via the SheetsService.
+        // We expose a helper on GoogleSheetsClient for this.
+        return await _sheets.GetNonSystemTabsAsync(spreadsheetId, SystemTabs, ct);
+    }
+
+    // ── Column auto-detection from header row ─────────────────────────────────
+
+    private static ColumnMap DetectColumns(IList<object> header)
+    {
+        var map = new ColumnMap();
+        for (var i = 0; i < header.Count; i++)
+        {
+            var col = (header[i]?.ToString() ?? "").Trim().ToLowerInvariant()
+                       .Replace(" ", "_").Replace("?", "").Replace(":", "");
+
+            if (IsMatch(col, "id", "lead_id"))                               map.Id           = i;
+            if (IsMatch(col, "created_time", "created_at", "date", "timestamp")) map.CreatedTime  = i;
+            if (IsMatch(col, "ad_name", "adname"))                           map.AdName       = i;
+            if (IsMatch(col, "full_name", "fullname", "name", "customer_name")) map.FullName     = i;
+            if (IsMatch(col, "phone", "phone_number", "mobile", "mobile_number", "contact")) map.Phone = i;
+            if (IsMatch(col, "email", "email_address"))                      map.Email        = i;
+            if (IsMatch(col, "what_is_your_business_name", "business_name", "company")) map.BusinessName = i;
+            if (IsMatch(col, "which_service", "service", "service_interested", "interest")) map.Service = i;
+            if (IsMatch(col, "lead_status", "status"))                       map.Status       = i;
+            if (IsMatch(col, "follow_up", "followup"))                       map.FollowUp     = i;
+            if (IsMatch(col, "date") && col != "created_time")               map.FollowDate   = i;
+            if (IsMatch(col, "time"))                                        map.FollowTime   = i;
+        }
+        return map;
+    }
+
+    private static bool IsMatch(string col, params string[] targets) =>
+        targets.Any(t => col == t || col.Contains(t));
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string NormaliseDigits(string s) =>
         new string(s.Where(char.IsDigit).ToArray());
@@ -201,8 +268,7 @@ public class FacebookSyncService
         if (idx < 0) return "";
         var start = idx + 3;
         var end   = notes.IndexOf('|', start);
-        var raw   = end < 0 ? notes[start..] : notes[start..end];
-        return raw.Trim();
+        return (end < 0 ? notes[start..] : notes[start..end]).Trim();
     }
 
     private static string MapStatus(string fbStatus) =>
@@ -215,4 +281,23 @@ public class FacebookSyncService
             "follow up"  => "Follow Up",
             _            => "New"
         };
+
+    private class ColumnMap
+    {
+        public int Id           = -1;
+        public int CreatedTime  = -1;
+        public int AdName       = -1;
+        public int FullName     = -1;
+        public int Phone        = -1;
+        public int Email        = -1;
+        public int BusinessName = -1;
+        public int Service      = -1;
+        public int Status       = -1;
+        public int FollowUp     = -1;
+        public int FollowDate   = -1;
+        public int FollowTime   = -1;
+
+        // A tab is considered a lead source if it has at least phone OR (name + email)
+        public bool HasLeadData => Phone >= 0 || (FullName >= 0 && Email >= 0);
+    }
 }

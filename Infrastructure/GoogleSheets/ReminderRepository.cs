@@ -1,4 +1,4 @@
-using Crm_Api.Application.Interfaces;
+﻿using Crm_Api.Application.Interfaces;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -7,20 +7,21 @@ namespace Crm_Api.Infrastructure.GoogleSheets;
 public class ReminderRepository : IReminderRepository
 {
     private readonly GoogleSheetsClient _client;
-    private readonly string _sheetId;
+    private readonly string? _entitySheetId;
+    private string SheetId => _client.ResolveSheetId(_entitySheetId);
     private readonly string _tab;
 
     public ReminderRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
     {
         _client = client;
-        _sheetId = opt.Value.Reminders;
+        _entitySheetId = opt.Value.RemindersSpreadsheetId;
         _tab = opt.Value.RemindersTab;
     }
 
     public async Task<List<Reminder>> GetAllAsync(CancellationToken ct = default)
     {
         await _client.EnsureRemindersSchemaAsync(ct);
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:H", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:H", ct);
         var list = new List<Reminder>();
         for (var i = 0; i < rows.Count; i++)
         {
@@ -54,7 +55,7 @@ public class ReminderRepository : IReminderRepository
         await _client.EnsureRemindersSchemaAsync(ct);
         reminder.ReminderId = await NextReminderIdAsync(ct);
         reminder.IsCompleted = "FALSE";
-        reminder.RowNumber = await _client.AppendAsync(_sheetId, _tab, ToRow(reminder), ct);
+        reminder.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(reminder), ct);
         return reminder;
     }
 
@@ -64,7 +65,7 @@ public class ReminderRepository : IReminderRepository
         if (existing is null) return false;
 
         reminder.RowNumber = existing.RowNumber;
-        await _client.OverwriteAsync(_sheetId, _tab, $"A{existing.RowNumber}",
+        await _client.OverwriteAsync(SheetId, _tab, $"A{existing.RowNumber}",
             new List<IList<object>> { ToRow(reminder) }, ct);
         return true;
     }
@@ -73,15 +74,15 @@ public class ReminderRepository : IReminderRepository
     {
         var existing = await GetByIdAsync(reminderId, ct);
         if (existing is null) return false;
-        await _client.DeleteRowAsync(_sheetId, _tab, existing.RowNumber, ct);
+        await _client.DeleteRowAsync(SheetId, _tab, existing.RowNumber, ct);
         return true;
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────
+    // â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private async Task<string> NextReminderIdAsync(CancellationToken ct)
     {
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:A", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:A", ct);
         var max = 0;
         foreach (var r in rows)
         {
@@ -113,3 +114,4 @@ public class ReminderRepository : IReminderRepository
         r.ReminderTime, r.Notes, r.IsCompleted
     };
 }
+

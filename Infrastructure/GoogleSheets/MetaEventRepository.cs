@@ -1,4 +1,4 @@
-using Crm_Api.Application.Interfaces;
+﻿using Crm_Api.Application.Interfaces;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -7,20 +7,21 @@ namespace Crm_Api.Infrastructure.GoogleSheets;
 public class MetaEventRepository : IMetaEventRepository
 {
     private readonly GoogleSheetsClient _client;
-    private readonly string _sheetId;
+    private readonly string? _entitySheetId;
+    private string SheetId => _client.ResolveSheetId(_entitySheetId);
     private readonly string _tab;
 
     public MetaEventRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
     {
         _client = client;
-        _sheetId = opt.Value.MetaEvents;
+        _entitySheetId = opt.Value.MetaEventsSpreadsheetId;
         _tab = opt.Value.MetaEventsTab;
     }
 
     public async Task<List<MetaConversionEvent>> GetAllAsync(CancellationToken ct = default)
     {
         await _client.EnsureMetaEventsSchemaAsync(ct);
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:J", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:J", ct);
         var list = new List<MetaConversionEvent>();
         for (var i = 0; i < rows.Count; i++)
         {
@@ -43,7 +44,7 @@ public class MetaEventRepository : IMetaEventRepository
         evt.EventId = await NextEventIdAsync(ct);
         if (string.IsNullOrWhiteSpace(evt.CreatedDate))
             evt.CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-        evt.RowNumber = await _client.AppendAsync(_sheetId, _tab, ToRow(evt), ct);
+        evt.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(evt), ct);
         return evt;
     }
 
@@ -52,16 +53,16 @@ public class MetaEventRepository : IMetaEventRepository
         var existing = await GetByIdAsync(evt.EventId, ct);
         if (existing is null) return false;
         evt.RowNumber = existing.RowNumber;
-        await _client.OverwriteAsync(_sheetId, _tab, $"A{existing.RowNumber}",
+        await _client.OverwriteAsync(SheetId, _tab, $"A{existing.RowNumber}",
             new List<IList<object>> { ToRow(evt) }, ct);
         return true;
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────
+    // â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private async Task<string> NextEventIdAsync(CancellationToken ct)
     {
-        var rows = await _client.ReadAsync(_sheetId, _tab, "A2:A", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:A", ct);
         var max = 0;
         foreach (var r in rows)
         {
@@ -95,3 +96,4 @@ public class MetaEventRepository : IMetaEventRepository
         e.EventName, e.EventSent, e.MetaResponse, e.CreatedDate, e.RetryCount
     };
 }
+
