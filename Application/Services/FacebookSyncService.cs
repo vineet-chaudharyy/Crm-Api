@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Crm_Api.Application.Interfaces;
 using Crm_Api.Domain.Entities;
 using Crm_Api.Infrastructure.GoogleSheets;
@@ -151,10 +152,21 @@ public class FacebookSyncService
                 else if (!string.IsNullOrWhiteSpace(followUp))
                     followUpDate = followUp;
 
+                // Store ALL original columns with their header names as JSON
+                var rawData = new Dictionary<string, string>();
+                for (var c = 0; c < rows[0].Count; c++)
+                {
+                    var colName = (rows[0][c]?.ToString() ?? "").Trim();
+                    var colVal  = c < row.Count ? (row[c]?.ToString() ?? "").Trim() : "";
+                    if (!string.IsNullOrWhiteSpace(colName) && !string.IsNullOrWhiteSpace(colVal))
+                        rawData[colName] = colVal;
+                }
+
                 var notesParts = new List<string>();
-                if (!string.IsNullOrWhiteSpace(service)) notesParts.Add($"Service: {service}");
-                if (!string.IsNullOrWhiteSpace(fbId))    notesParts.Add($"FB: {fbId}");
+                if (!string.IsNullOrWhiteSpace(fbId)) notesParts.Add($"FB: {fbId}");
                 notesParts.Add($"Ad Tab: {tabName}");
+                // Append raw ad data as JSON so frontend can render original column names
+                notesParts.Add($"AD_DATA:{JsonSerializer.Serialize(rawData)}");
 
                 var lead = new Lead
                 {
