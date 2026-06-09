@@ -31,6 +31,10 @@ builder.Services.AddScoped<DataSeeder>();
 // SettingsService must be Singleton — it holds in-memory state + event subscriptions
 builder.Services.AddSingleton<SettingsService>();
 
+// ---- Facebook auto-sync -----------------------------------------------------
+builder.Services.AddScoped<FacebookSyncService>();
+builder.Services.AddHostedService<FacebookSyncBackgroundService>();
+
 // ---- Meta Conversions API ---------------------------------------------------
 builder.Services.Configure<MetaConversionOptions>(
     builder.Configuration.GetSection(MetaConversionOptions.SectionName));

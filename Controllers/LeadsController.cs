@@ -1,8 +1,8 @@
 using System.Globalization;
 using Crm_Api.Application.Dtos;
 using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
-using Crm_Api.Infrastructure.GoogleSheets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,18 +16,18 @@ public class LeadsController : ControllerBase
     private readonly ILeadRepository _leads;
     private readonly IActivityLogRepository _activity;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly GoogleSheetsClient _sheets;
+    private readonly FacebookSyncService _fbSync;
 
     public LeadsController(
         ILeadRepository leads,
         IActivityLogRepository activity,
         IServiceScopeFactory scopeFactory,
-        GoogleSheetsClient sheets)
+        FacebookSyncService fbSync)
     {
         _leads = leads;
         _activity = activity;
         _scopeFactory = scopeFactory;
-        _sheets = sheets;
+        _fbSync = fbSync;
     }
 
     private string CurrentUser => User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "unknown";
@@ -227,154 +227,16 @@ public class LeadsController : ControllerBase
     }
 
     // ── POST /api/leads/sync-facebook ─────────────────────────────────────────
-    /// <summary>
-    /// Reads the "Video Ad" tab (Facebook Lead Ads export) from Google Sheets
-    /// and imports any new leads into the CRM Leads tab.
-    /// Deduplication is done by phone number — existing phones are skipped.
-    ///
-    /// Column mapping (0-based):
-    ///  0=id, 1=created_time, 3=ad_name, 12=which_service, 13=business_name,
-    ///  14=full_name, 15=phone, 16=email, 17=lead_status, 18=follow_up, 19=date, 20=time
-    /// </summary>
     [Authorize(Roles = "Admin")]
     [HttpPost("sync-facebook")]
     public async Task<IActionResult> SyncFacebook(CancellationToken ct)
     {
-        var spreadsheetId = _sheets.EffectiveSpreadsheetId;
-
-        // Read all rows from "Video Ad" tab (skip header row 1)
-        IList<IList<object>> rows;
-        try
-        {
-            rows = await _sheets.ReadAsync(spreadsheetId, "Video Ad", "A2:U", ct);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new { message = $"Could not read 'Video Ad' tab: {ex.Message}" });
-        }
-
-        if (rows.Count == 0)
-            return Ok(new { message = "No data found in 'Video Ad' tab.", added = 0, skipped = 0 });
-
-        // Build set of existing phone numbers for deduplication
-        var existing = await _leads.GetAllAsync(ct);
-        var existingPhones = new HashSet<string>(
-            existing.Select(l => NormaliseDigits(l.MobileNumber ?? "")),
-            StringComparer.OrdinalIgnoreCase);
-
-        // Also track FB lead IDs stored in Notes to avoid re-importing same record
-        var existingFbIds = new HashSet<string>(
-            existing
-                .Where(l => (l.Notes ?? "").Contains("FB:"))
-                .Select(l =>
-                {
-                    var start = (l.Notes ?? "").IndexOf("FB:") + 3;
-                    var end   = (l.Notes ?? "").IndexOf(' ', start);
-                    return end < 0
-                        ? (l.Notes ?? "")[start..]
-                        : (l.Notes ?? "")[start..end];
-                }),
-            StringComparer.OrdinalIgnoreCase);
-
-        int added = 0, skipped = 0;
-
-        foreach (var row in rows)
-        {
-            string Col(int i) => i < row.Count ? (row[i]?.ToString() ?? "").Trim() : "";
-
-            var fbId     = Col(0);
-            var phone    = Col(15);
-            var normPhone = NormaliseDigits(phone);
-
-            // Skip if already imported (by FB id or phone)
-            if ((!string.IsNullOrWhiteSpace(fbId)    && existingFbIds.Contains(fbId)) ||
-                (!string.IsNullOrWhiteSpace(normPhone) && existingPhones.Contains(normPhone)))
-            {
-                skipped++;
-                continue;
-            }
-
-            var fullName     = Col(14);
-            if (string.IsNullOrWhiteSpace(fullName) && string.IsNullOrWhiteSpace(phone))
-            {
-                skipped++; continue; // empty row
-            }
-
-            var createdTime  = Col(1);
-            var adName       = Col(3);
-            var service      = Col(12);
-            var businessName = Col(13);
-            var email        = Col(16);
-            var fbStatus     = Col(17);
-            var followUp     = Col(18);
-            var followDate   = Col(19);
-            var followTime   = Col(20);
-
-            // Parse date
-            var dateAdded = DateTime.TryParse(createdTime, out var dt)
-                ? dt.ToString("yyyy-MM-dd HH:mm:ss")
-                : DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-
-            // Map Facebook status → CRM status
-            var status = fbStatus?.Trim().ToLowerInvariant() switch
-            {
-                "converted"  => "Converted",
-                "interested" => "Interested",
-                "contacted"  => "Contacted",
-                "rejected"   => "Rejected",
-                "follow up"  => "Follow Up",
-                _            => "New"
-            };
-
-            // Combine follow-up date + time
-            var followUpDate = "";
-            if (!string.IsNullOrWhiteSpace(followDate))
-                followUpDate = string.IsNullOrWhiteSpace(followTime)
-                    ? followDate
-                    : $"{followDate} {followTime}";
-            else if (!string.IsNullOrWhiteSpace(followUp))
-                followUpDate = followUp;
-
-            // Build notes
-            var notesParts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(service))      notesParts.Add($"Service: {service}");
-            if (!string.IsNullOrWhiteSpace(fbId))         notesParts.Add($"FB: {fbId}");
-
-            var lead = new Lead
-            {
-                FullName        = string.IsNullOrWhiteSpace(fullName) ? "Unknown" : fullName,
-                MobileNumber    = phone,
-                EmailAddress    = email,
-                CompanyName     = businessName,
-                LeadSource      = string.IsNullOrWhiteSpace(adName) ? "Facebook" : $"Facebook - {adName}",
-                Status          = status,
-                FollowUpDate    = followUpDate,
-                AssignedEmployee = "",
-                Notes           = string.Join(" | ", notesParts),
-                DateAdded       = dateAdded,
-                City            = "",
-                State           = "",
-            };
-
-            var created = await _leads.AddAsync(lead, ct);
-            FireMetaEvent(created, "", status);
-
-            if (!string.IsNullOrWhiteSpace(normPhone))  existingPhones.Add(normPhone);
-            if (!string.IsNullOrWhiteSpace(fbId))       existingFbIds.Add(fbId);
-            added++;
-        }
-
-        await _activity.LogAsync(new ActivityLog
-        {
-            User    = CurrentUser,
-            Action  = "Facebook Sync",
-            Details = $"Facebook sheet sync: {added} new leads imported, {skipped} duplicates skipped."
-        }, ct);
-
+        var (added, deleted, skipped) = await _fbSync.RunAsync(ct);
         return Ok(new
         {
-            message = $"✓ Sync complete! {added} new leads imported, {skipped} duplicates skipped.",
+            message = $"✓ Sync complete! {added} new leads imported, {deleted} marked Deleted, {skipped} duplicates skipped.",
             added,
+            deleted,
             skipped
         });
     }
@@ -416,9 +278,6 @@ public class LeadsController : ControllerBase
         Status = string.IsNullOrWhiteSpace(d.Status) ? "New" : d.Status,
         FollowUpDate = d.FollowUpDate, AssignedEmployee = d.AssignedEmployee, Notes = d.Notes
     };
-
-    private static string NormaliseDigits(string s) =>
-        new string(s.Where(char.IsDigit).ToArray());
 
     private static List<string> SplitCsv(string line)
     {
