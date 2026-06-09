@@ -113,26 +113,25 @@ public class FacebookSyncService
                 var fbId      = Col(colMap.Id);
                 var phone     = Col(colMap.Phone);
                 var normPhone = NormaliseDigits(phone);
+                var fullName  = Col(colMap.FullName);
+
+                if (string.IsNullOrWhiteSpace(fullName) && string.IsNullOrWhiteSpace(phone))
+                    continue; // empty row
 
                 if (!string.IsNullOrWhiteSpace(fbId)) allSheetFbIds.Add(fbId);
 
-                // Dedup
-                if ((!string.IsNullOrWhiteSpace(fbId)     && crmByFbId.ContainsKey(fbId)) ||
-                    (!string.IsNullOrWhiteSpace(normPhone) && existingPhones.Contains(normPhone)))
+                // Build raw ad data JSON (all original columns)
+                var rawData = new Dictionary<string, string>();
+                for (var c = 0; c < rows[0].Count; c++)
                 {
-                    totalSkipped++;
-                    continue;
-                }
-
-                var fullName = Col(colMap.FullName);
-                if (string.IsNullOrWhiteSpace(fullName) && string.IsNullOrWhiteSpace(phone))
-                {
-                    totalSkipped++; continue;
+                    var colName = (rows[0][c]?.ToString() ?? "").Trim();
+                    var colVal  = c < row.Count ? (row[c]?.ToString() ?? "").Trim() : "";
+                    if (!string.IsNullOrWhiteSpace(colName) && !string.IsNullOrWhiteSpace(colVal))
+                        rawData[colName] = colVal;
                 }
 
                 var createdTime  = Col(colMap.CreatedTime);
                 var adName       = Col(colMap.AdName);
-                var service      = Col(colMap.Service);
                 var businessName = Col(colMap.BusinessName);
                 var email        = Col(colMap.Email);
                 var fbStatus     = Col(colMap.Status);
@@ -144,7 +143,7 @@ public class FacebookSyncService
                     ? dt.ToString("yyyy-MM-dd HH:mm:ss")
                     : DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
-                var status = MapStatus(fbStatus);
+                var newStatus = MapStatus(fbStatus);
 
                 var followUpDate = "";
                 if (!string.IsNullOrWhiteSpace(followDate))
@@ -152,40 +151,59 @@ public class FacebookSyncService
                 else if (!string.IsNullOrWhiteSpace(followUp))
                     followUpDate = followUp;
 
-                // Store ALL original columns with their header names as JSON
-                var rawData = new Dictionary<string, string>();
-                for (var c = 0; c < rows[0].Count; c++)
-                {
-                    var colName = (rows[0][c]?.ToString() ?? "").Trim();
-                    var colVal  = c < row.Count ? (row[c]?.ToString() ?? "").Trim() : "";
-                    if (!string.IsNullOrWhiteSpace(colName) && !string.IsNullOrWhiteSpace(colVal))
-                        rawData[colName] = colVal;
-                }
-
                 var notesParts = new List<string>();
                 if (!string.IsNullOrWhiteSpace(fbId)) notesParts.Add($"FB: {fbId}");
                 notesParts.Add($"Ad Tab: {tabName}");
-                // Append raw ad data as JSON so frontend can render original column names
                 notesParts.Add($"AD_DATA:{JsonSerializer.Serialize(rawData)}");
+                var notes = string.Join(" | ", notesParts);
 
+                var source = string.IsNullOrWhiteSpace(adName) ? $"Facebook - {tabName}" : $"Facebook - {adName}";
+
+                // ── UPDATE existing lead (matched by FB id) ───────────────────
+                if (!string.IsNullOrWhiteSpace(fbId) && crmByFbId.TryGetValue(fbId, out var existingLead))
+                {
+                    // Only update fields that come from the sheet; preserve CRM-managed fields
+                    existingLead.FullName     = string.IsNullOrWhiteSpace(fullName) ? existingLead.FullName : fullName;
+                    existingLead.MobileNumber = string.IsNullOrWhiteSpace(phone)    ? existingLead.MobileNumber : phone;
+                    existingLead.EmailAddress = string.IsNullOrWhiteSpace(email)    ? existingLead.EmailAddress : email;
+                    existingLead.CompanyName  = string.IsNullOrWhiteSpace(businessName) ? existingLead.CompanyName : businessName;
+                    existingLead.LeadSource   = source;
+                    existingLead.FollowUpDate = string.IsNullOrWhiteSpace(followUpDate) ? existingLead.FollowUpDate : followUpDate;
+                    existingLead.Notes        = notes; // always refresh AD_DATA
+                    // Only update status if CRM status is still "New" (not manually changed)
+                    if (existingLead.Status.Equals("New", StringComparison.OrdinalIgnoreCase))
+                        existingLead.Status = newStatus;
+
+                    await _leads.UpdateAsync(existingLead, ct);
+                    totalAdded++; // count as "synced"
+                    continue;
+                }
+
+                // ── Also check by phone (no FB id available) ──────────────────
+                if (!string.IsNullOrWhiteSpace(normPhone) && existingPhones.Contains(normPhone))
+                {
+                    totalSkipped++;
+                    continue;
+                }
+
+                // ── ADD new lead ──────────────────────────────────────────────
                 var lead = new Lead
                 {
                     FullName         = string.IsNullOrWhiteSpace(fullName) ? "Unknown" : fullName,
                     MobileNumber     = phone,
                     EmailAddress     = email,
                     CompanyName      = businessName,
-                    LeadSource       = string.IsNullOrWhiteSpace(adName) ? $"Facebook - {tabName}" : $"Facebook - {adName}",
-                    Status           = status,
+                    LeadSource       = source,
+                    Status           = newStatus,
                     FollowUpDate     = followUpDate,
                     AssignedEmployee = "",
-                    Notes            = string.Join(" | ", notesParts),
+                    Notes            = notes,
                     DateAdded        = dateAdded,
                     City             = "",
                     State            = "",
                 };
 
                 var created = await _leads.AddAsync(lead, ct);
-
                 if (!string.IsNullOrWhiteSpace(normPhone)) existingPhones.Add(normPhone);
                 if (!string.IsNullOrWhiteSpace(fbId))      crmByFbId[fbId] = created;
                 totalAdded++;
