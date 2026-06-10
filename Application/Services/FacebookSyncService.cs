@@ -265,7 +265,7 @@ public class FacebookSyncService
             var col = (header[i]?.ToString() ?? "").Trim().ToLowerInvariant()
                        .Replace(" ", "_").Replace("?", "").Replace(":", "");
 
-            if (IsMatch(col, "id", "lead_id"))                               map.Id           = i;
+            if (col == "id" || col == "lead_id")                            map.Id           = i;
             if (IsMatch(col, "created_time", "created_at", "date", "timestamp")) map.CreatedTime  = i;
             if (IsMatch(col, "ad_name", "adname"))                           map.AdName       = i;
             if (IsMatch(col, "full_name", "fullname", "name", "customer_name")) map.FullName     = i;
