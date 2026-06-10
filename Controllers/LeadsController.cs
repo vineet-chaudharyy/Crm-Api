@@ -231,7 +231,15 @@ public class LeadsController : ControllerBase
     [HttpPost("sync-facebook")]
     public async Task<IActionResult> SyncFacebook(CancellationToken ct)
     {
-        var (added, deleted, skipped) = await _fbSync.RunAsync(ct);
+        int added, deleted, skipped;
+        try
+        {
+            (added, deleted, skipped) = await _fbSync.RunAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = $"Sync error: {ex.Message}" });
+        }
         return Ok(new
         {
             message = $"✓ Sync complete! {added} new leads imported, {deleted} marked Deleted, {skipped} duplicates skipped.",
