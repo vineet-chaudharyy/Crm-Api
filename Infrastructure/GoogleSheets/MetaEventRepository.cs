@@ -1,4 +1,5 @@
 ﻿using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -43,7 +44,7 @@ public class MetaEventRepository : IMetaEventRepository
         await _client.EnsureMetaEventsSchemaAsync(ct);
         evt.EventId = await NextEventIdAsync(ct);
         if (string.IsNullOrWhiteSpace(evt.CreatedDate))
-            evt.CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+            evt.CreatedDate = IndianTime.NowString();
         evt.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(evt), ct);
         return evt;
     }

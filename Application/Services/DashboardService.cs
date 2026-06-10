@@ -17,7 +17,7 @@ public class DashboardService
     public async Task<DashboardStatsDto> GetStatsAsync(CancellationToken ct = default)
     {
         var leads = await _leads.GetAllAsync(ct);
-        var today = DateTime.UtcNow.Date;
+        var today = IndianTime.Today;
 
         var dto = new DashboardStatsDto
         {

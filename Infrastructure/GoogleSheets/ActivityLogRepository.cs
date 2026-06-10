@@ -1,4 +1,5 @@
 ﻿using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -22,7 +23,7 @@ public class ActivityLogRepository : IActivityLogRepository
     {
         await _client.EnsureActivitySchemaAsync(ct);
         if (string.IsNullOrWhiteSpace(entry.Timestamp))
-            entry.Timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+            entry.Timestamp = IndianTime.NowString();
         await _client.AppendAsync(SheetId, _tab, new List<object>
         {
             entry.Timestamp, entry.User, entry.Action, entry.LeadId, entry.Details

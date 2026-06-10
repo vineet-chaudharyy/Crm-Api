@@ -1,4 +1,5 @@
 using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -45,9 +46,9 @@ public class LeadRepository : ILeadRepository
     {
         await _client.EnsureLeadsSchemaAsync(ct);
         lead.LeadId = await NextLeadIdAsync(ct);
-        var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+        var now = IndianTime.NowString();
         if (string.IsNullOrWhiteSpace(lead.DateAdded))
-            lead.DateAdded = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            lead.DateAdded = IndianTime.TodayString();
         lead.LastUpdated = now;
         lead.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(lead), ct);
         return lead;
@@ -60,7 +61,7 @@ public class LeadRepository : ILeadRepository
 
         lead.RowNumber = existing.RowNumber;
         lead.DateAdded = string.IsNullOrWhiteSpace(lead.DateAdded) ? existing.DateAdded : lead.DateAdded;
-        lead.LastUpdated = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+        lead.LastUpdated = IndianTime.NowString();
 
         await _client.OverwriteAsync(SheetId, _tab, $"A{existing.RowNumber}",
             new List<IList<object>> { ToRow(lead) }, ct);

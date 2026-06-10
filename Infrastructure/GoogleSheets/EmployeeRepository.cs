@@ -1,4 +1,5 @@
 ﻿using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -64,7 +65,7 @@ public class EmployeeRepository : IEmployeeRepository
         await _client.EnsureEmployeesSchemaAsync(ct);
         e.EmployeeId = await NextEmployeeIdAsync(ct);
         if (string.IsNullOrWhiteSpace(e.CreatedDate))
-            e.CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            e.CreatedDate = IndianTime.TodayString();
         e.RowNumber = await _client.AppendAsync(SheetId, _tab, ToRow(e), ct);
         return e;
     }

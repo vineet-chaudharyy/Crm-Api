@@ -141,7 +141,7 @@ public class FacebookSyncService
 
                 var dateAdded = DateTime.TryParse(createdTime, out var dt)
                     ? dt.ToString("yyyy-MM-dd HH:mm:ss")
-                    : DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+                    : IndianTime.NowString();
 
                 var newStatus = MapStatus(fbStatus);
 
