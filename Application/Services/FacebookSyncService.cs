@@ -210,22 +210,19 @@ public class FacebookSyncService
             }
         }
 
-        // ── Mark DELETED — FB ids no longer in ANY ad tab ────────────────────
+        // ── REMOVE leads — FB ids no longer in ANY ad tab ────────────────────
         foreach (var (fbId, lead) in crmByFbId)
         {
             if (allSheetFbIds.Contains(fbId)) continue;
-            if (lead.Status.Equals("Deleted", StringComparison.OrdinalIgnoreCase)) continue;
 
-            lead.Status      = "Deleted";
-            lead.LastUpdated = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-            await _leads.UpdateAsync(lead, ct);
+            await _leads.DeleteAsync(lead.LeadId, ct);
 
             await _activity.LogAsync(new ActivityLog
             {
                 User    = "System",
                 Action  = "Auto-Deleted",
                 LeadId  = lead.LeadId,
-                Details = $"Lead '{lead.FullName}' removed from Facebook sheet → marked Deleted"
+                Details = $"Lead '{lead.FullName}' removed from Facebook sheet → deleted from CRM"
             }, ct);
 
             totalDeleted++;
@@ -289,8 +286,11 @@ public class FacebookSyncService
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static string NormaliseDigits(string s) =>
-        new string(s.Where(char.IsDigit).ToArray());
+    private static string NormaliseDigits(string s)
+    {
+        var digits = new string(s.Where(char.IsDigit).ToArray());
+        return digits.Length > 10 ? digits[^10..] : digits; // ignore country code
+    }
 
     private static string ExtractFbId(string notes)
     {
