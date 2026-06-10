@@ -291,7 +291,7 @@ public class GoogleSheetsClient
     // ── Retry helper for 429 rate-limit errors ─────────────────────────────────
     private async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct)
     {
-        var delays = new[] { 1000, 2000, 4000, 8000, 15000 };
+        var delays = new[] { 2000, 5000, 10000, 20000, 30000, 30000 };
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -327,53 +327,64 @@ public class GoogleSheetsClient
     public async Task<int> AppendAsync(
         string spreadsheetId, string tab, IList<object> row, CancellationToken ct)
     {
-        var service = await ServiceAsync(ct);
-        var body = new ValueRange { Values = new List<IList<object>> { row } };
-        var req = service.Spreadsheets.Values.Append(body, spreadsheetId, $"{tab}!A:A");
-        req.ValueInputOption = SpreadsheetsResource.ValuesResource.AppendRequest.ValueInputOptionEnum.RAW;
-        req.InsertDataOption = SpreadsheetsResource.ValuesResource.AppendRequest.InsertDataOptionEnum.INSERTROWS;
-        var resp = await req.ExecuteAsync(ct);
-        var updated = resp.Updates?.UpdatedRange ?? "";
-        var startCell = updated.Split('!').Last().Split(':').First();
-        var digits = new string(startCell.Where(char.IsDigit).ToArray());
-        return int.TryParse(digits, out var idx) ? idx : -1;
+        return await WithRetryAsync(async () =>
+        {
+            var service = await ServiceAsync(ct);
+            var body = new ValueRange { Values = new List<IList<object>> { row } };
+            var req = service.Spreadsheets.Values.Append(body, spreadsheetId, $"{tab}!A:A");
+            req.ValueInputOption = SpreadsheetsResource.ValuesResource.AppendRequest.ValueInputOptionEnum.RAW;
+            req.InsertDataOption = SpreadsheetsResource.ValuesResource.AppendRequest.InsertDataOptionEnum.INSERTROWS;
+            var resp = await req.ExecuteAsync(ct);
+            var updated = resp.Updates?.UpdatedRange ?? "";
+            var startCell = updated.Split('!').Last().Split(':').First();
+            var digits = new string(startCell.Where(char.IsDigit).ToArray());
+            return int.TryParse(digits, out var idx) ? idx : -1;
+        }, ct);
     }
 
     public async Task OverwriteAsync(
         string spreadsheetId, string tab, string a1Start,
         IList<IList<object>> values, CancellationToken ct)
     {
-        var service = await ServiceAsync(ct);
-        var body = new ValueRange { Values = values };
-        var req = service.Spreadsheets.Values.Update(body, spreadsheetId, $"{tab}!{a1Start}");
-        req.ValueInputOption = SpreadsheetsResource.ValuesResource.UpdateRequest.ValueInputOptionEnum.RAW;
-        await req.ExecuteAsync(ct);
+        await WithRetryAsync<object?>(async () =>
+        {
+            var service = await ServiceAsync(ct);
+            var body = new ValueRange { Values = values };
+            var req = service.Spreadsheets.Values.Update(body, spreadsheetId, $"{tab}!{a1Start}");
+            req.ValueInputOption = SpreadsheetsResource.ValuesResource.UpdateRequest.ValueInputOptionEnum.RAW;
+            await req.ExecuteAsync(ct);
+            return null;
+        }, ct);
     }
 
     /// <summary>Physically deletes a 1-based sheet row.</summary>
     public async Task DeleteRowAsync(string spreadsheetId, string tab, int rowNumber, CancellationToken ct)
     {
-        var service = await ServiceAsync(ct);
-        var gid = await TabGidAsync(spreadsheetId, tab, ct);
-        var req = new Request
+        await WithRetryAsync<object?>(async () =>
         {
-            DeleteDimension = new DeleteDimensionRequest
+            var service = await ServiceAsync(ct);
+            var gid = await TabGidAsync(spreadsheetId, tab, ct);
+            var req = new Request
             {
-                Range = new DimensionRange
+                DeleteDimension = new DeleteDimensionRequest
                 {
-                    SheetId = gid,
-                    Dimension = "ROWS",
-                    StartIndex = rowNumber - 1,
-                    EndIndex = rowNumber
+                    Range = new DimensionRange
+                    {
+                        SheetId = gid,
+                        Dimension = "ROWS",
+                        StartIndex = rowNumber - 1,
+                        EndIndex = rowNumber
+                    }
                 }
-            }
-        };
-        await service.Spreadsheets
-            .BatchUpdate(new BatchUpdateSpreadsheetRequest
-            {
-                Requests = new List<Request> { req }
-            }, spreadsheetId)
-            .ExecuteAsync(ct);
+            };
+            await service.Spreadsheets
+                .BatchUpdate(new BatchUpdateSpreadsheetRequest
+                {
+                    Requests = new List<Request> { req }
+                }, spreadsheetId)
+                .ExecuteAsync(ct);
+            return null;
+        }, ct);
     }
 }
 
