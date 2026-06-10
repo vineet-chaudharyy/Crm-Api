@@ -246,12 +246,15 @@ public class GoogleSheetsClient
         HashSet<string> systemTabs,
         CancellationToken ct = default)
     {
-        var service  = await ServiceAsync(ct);
-        var meta     = await service.Spreadsheets.Get(spreadsheetId).ExecuteAsync(ct);
-        return meta.Sheets
-            .Select(s => s.Properties.Title)
-            .Where(t => !systemTabs.Contains(t))
-            .ToList();
+        return await WithRetryAsync(async () =>
+        {
+            var service = await ServiceAsync(ct);
+            var meta = await service.Spreadsheets.Get(spreadsheetId).ExecuteAsync(ct);
+            return meta.Sheets
+                .Select(s => s.Properties.Title)
+                .Where(t => !systemTabs.Contains(t))
+                .ToList();
+        }, ct);
     }
 
     // ── Per-entity convenience methods ────────────────────────────────────────
@@ -285,16 +288,39 @@ public class GoogleSheetsClient
         return _tabGids.GetValueOrDefault(key, 0);
     }
 
+    // ── Retry helper for 429 rate-limit errors ─────────────────────────────────
+    private async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    {
+        var delays = new[] { 1000, 2000, 4000, 8000, 15000 };
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await action();
+            }
+            catch (Google.GoogleApiException ex) when (
+                (int)ex.HttpStatusCode == 429 && attempt < delays.Length)
+            {
+                _logger.LogWarning("Google Sheets rate limit hit — retrying in {Delay}ms (attempt {N})",
+                    delays[attempt], attempt + 1);
+                await Task.Delay(delays[attempt], ct);
+            }
+        }
+    }
+
     // ── Data methods ──────────────────────────────────────────────────────────
 
     public async Task<IList<IList<object>>> ReadAsync(
         string spreadsheetId, string tab, string a1Range, CancellationToken ct)
     {
-        var service = await ServiceAsync(ct);
-        var resp = await service.Spreadsheets.Values
-            .Get(spreadsheetId, $"{tab}!{a1Range}")
-            .ExecuteAsync(ct);
-        return resp.Values ?? new List<IList<object>>();
+        return await WithRetryAsync(async () =>
+        {
+            var service = await ServiceAsync(ct);
+            var resp = await service.Spreadsheets.Values
+                .Get(spreadsheetId, $"{tab}!{a1Range}")
+                .ExecuteAsync(ct);
+            return resp.Values ?? new List<IList<object>>();
+        }, ct);
     }
 
     /// <summary>Appends one row; returns the 1-based row index written.</summary>
