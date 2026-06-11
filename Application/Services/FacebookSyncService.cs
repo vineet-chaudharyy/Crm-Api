@@ -15,7 +15,7 @@ public class FacebookSyncService
     // These tabs belong to the CRM itself — never sync FROM them
     private static readonly HashSet<string> SystemTabs = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Leads", "Employees", "Activity", "Reminders", "MetaEvents"
+        "Leads", "Employees", "Activity", "Reminders", "MetaEvents", "Attendance"
     };
 
     private readonly GoogleSheetsClient _sheets;

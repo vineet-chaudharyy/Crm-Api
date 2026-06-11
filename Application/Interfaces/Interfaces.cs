@@ -53,6 +53,14 @@ public interface IMetaEventRepository
     Task<bool> UpdateAsync(MetaConversionEvent evt, CancellationToken ct = default);
 }
 
+public interface IAttendanceRepository
+{
+    Task<List<Attendance>> GetAllAsync(CancellationToken ct = default);
+    Task<Attendance?> GetTodayAsync(string employeeId, string date, CancellationToken ct = default);
+    Task<Attendance> AddAsync(Attendance attendance, CancellationToken ct = default);
+    Task<bool> UpdateAsync(Attendance attendance, CancellationToken ct = default);
+}
+
 /// <summary>Sends events to Meta Conversions API and logs results.</summary>
 public interface IMetaConversionService
 {

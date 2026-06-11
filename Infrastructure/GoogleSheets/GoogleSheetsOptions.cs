@@ -26,6 +26,7 @@ public class GoogleSheetsOptions
     public string ActivityTab { get; set; } = "Activity";
     public string RemindersTab { get; set; } = "Reminders";
     public string MetaEventsTab { get; set; } = "MetaEvents";
+    public string AttendanceTab { get; set; } = "Attendance";
 
     // ── Per-entity optional spreadsheet IDs ──────────────────────────────────
     // Leave empty (or omit from appsettings) to use the default SpreadsheetId above.
@@ -42,6 +43,9 @@ public class GoogleSheetsOptions
 
     /// <summary>Spreadsheet that holds the Reminders tab. Falls back to SpreadsheetId.</summary>
     public string? RemindersSpreadsheetId { get; set; }
+
+    /// <summary>Spreadsheet that holds the Attendance tab. Falls back to SpreadsheetId.</summary>
+    public string? AttendanceSpreadsheetId { get; set; }
 
     // ── Helper — resolves the effective spreadsheet ID for each entity ────────
     public string? MetaEventsSpreadsheetId { get; set; }

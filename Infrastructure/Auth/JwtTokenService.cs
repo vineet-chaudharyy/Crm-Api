@@ -25,7 +25,10 @@ public class JwtTokenService : IJwtTokenService
 
     public (string token, DateTime expiresAt) CreateToken(Employee employee)
     {
-        var expires = DateTime.UtcNow.AddHours(_opt.ExpiryHours);
+        // Admin sessions never expire on their own — only an explicit logout clears them.
+        var expires = employee.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase)
+            ? DateTime.UtcNow.AddYears(50)
+            : DateTime.UtcNow.AddHours(_opt.ExpiryHours);
 
         var claims = new[]
         {

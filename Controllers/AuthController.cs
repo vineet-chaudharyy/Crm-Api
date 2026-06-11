@@ -1,5 +1,6 @@
 using Crm_Api.Application.Dtos;
 using Crm_Api.Application.Interfaces;
+using Crm_Api.Application.Services;
 using Crm_Api.Domain.Entities;
 using Crm_Api.Domain.Enums;
 using Crm_Api.Infrastructure.Auth;
@@ -15,15 +16,18 @@ public class AuthController : ControllerBase
     private readonly IEmployeeRepository _employees;
     private readonly IJwtTokenService _jwt;
     private readonly IActivityLogRepository _activity;
+    private readonly IAttendanceRepository _attendance;
 
     public AuthController(
         IEmployeeRepository employees,
         IJwtTokenService jwt,
-        IActivityLogRepository activity)
+        IActivityLogRepository activity,
+        IAttendanceRepository attendance)
     {
         _employees = employees;
         _jwt = jwt;
         _activity = activity;
+        _attendance = attendance;
     }
 
     // ── Setup Status ─────────────────────────────────────────────────────────
@@ -131,6 +135,20 @@ public class AuthController : ControllerBase
             Details = $"{user.FullName} signed in"
         }, ct);
 
+        // Record today's login time (only the FIRST login of the day is kept)
+        var today = IndianTime.TodayString();
+        var existingAttendance = await _attendance.GetTodayAsync(user.EmployeeId, today, ct);
+        if (existingAttendance is null)
+        {
+            await _attendance.AddAsync(new Attendance
+            {
+                Date = today,
+                EmployeeId = user.EmployeeId,
+                EmployeeName = user.FullName,
+                LoginTime = IndianTime.Now.ToString("HH:mm:ss"),
+            }, ct);
+        }
+
         return Ok(new AuthResponse
         {
             Token = token,
@@ -151,4 +169,41 @@ public class AuthController : ControllerBase
         email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value,
         role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value,
     });
+
+    // ── Logout ────────────────────────────────────────────────────────────────
+
+    /// <summary>Records the logout time and computes total hours worked today.</summary>
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(CancellationToken ct)
+    {
+        var employeeId = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+
+        var today = IndianTime.TodayString();
+        var record = await _attendance.GetTodayAsync(employeeId, today, ct);
+        if (record is not null && string.IsNullOrWhiteSpace(record.LogoutTime))
+        {
+            var now = IndianTime.Now;
+            record.LogoutTime = now.ToString("HH:mm:ss");
+
+            if (TimeSpan.TryParse(record.LoginTime, out var loginTs))
+            {
+                var worked = now.TimeOfDay - loginTs;
+                if (worked < TimeSpan.Zero) worked = TimeSpan.Zero;
+                record.TotalHours = $"{(int)worked.TotalHours}h {worked.Minutes}m";
+            }
+
+            await _attendance.UpdateAsync(record, ct);
+        }
+
+        await _activity.LogAsync(new ActivityLog
+        {
+            User = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
+            Action = "Logout",
+            Details = $"{User.Identity?.Name} signed out"
+        }, ct);
+
+        return Ok(new { message = "Logged out." });
+    }
 }

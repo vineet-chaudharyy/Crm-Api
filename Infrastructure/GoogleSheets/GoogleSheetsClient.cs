@@ -44,6 +44,11 @@ public class GoogleSheetsClient
         "Reminder Time", "Notes", "Is Completed"
     };
 
+    public static readonly string[] AttendanceHeader =
+    {
+        "Date", "Employee ID", "Employee Name", "Login Time", "Logout Time", "Total Hours"
+    };
+
     public static readonly string[] MetaEventHeader =
     {
         "Event ID", "Lead ID", "Lead Name", "Previous Status", "New Status",
@@ -270,6 +275,9 @@ public class GoogleSheetsClient
 
     public Task EnsureRemindersSchemaAsync(CancellationToken ct) =>
         EnsureSchemaAsync(ResolveSheetId(_opt.RemindersSpreadsheetId), new[] { (_opt.RemindersTab, ReminderHeader) }, ct);
+
+    public Task EnsureAttendanceSchemaAsync(CancellationToken ct) =>
+        EnsureSchemaAsync(ResolveSheetId(_opt.AttendanceSpreadsheetId), new[] { (_opt.AttendanceTab, AttendanceHeader) }, ct);
 
     public Task EnsureMetaEventsSchemaAsync(CancellationToken ct) =>
         EnsureSchemaAsync(ResolveSheetId(_opt.MetaEventsSpreadsheetId), new[] { (_opt.MetaEventsTab, MetaEventHeader) }, ct);

@@ -23,6 +23,7 @@ builder.Services.AddScoped<IEmployeeRepository, EmployeeRepository>();
 builder.Services.AddScoped<IActivityLogRepository, ActivityLogRepository>();
 builder.Services.AddScoped<IReminderRepository, ReminderRepository>();
 builder.Services.AddScoped<IMetaEventRepository, MetaEventRepository>();
+builder.Services.AddScoped<IAttendanceRepository, AttendanceRepository>();
 
 // ---- Application services ---------------------------------------------------
 builder.Services.AddScoped<DashboardService>();
