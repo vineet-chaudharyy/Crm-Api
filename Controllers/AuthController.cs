@@ -136,17 +136,24 @@ public class AuthController : ControllerBase
         }, ct);
 
         // Record today's login time (only the FIRST login of the day is kept)
-        var today = IndianTime.TodayString();
-        var existingAttendance = await _attendance.GetTodayAsync(user.EmployeeId, today, ct);
-        if (existingAttendance is null)
+        try
         {
-            await _attendance.AddAsync(new Attendance
+            var today = IndianTime.TodayString();
+            var existingAttendance = await _attendance.GetTodayAsync(user.EmployeeId, today, ct);
+            if (existingAttendance is null)
             {
-                Date = today,
-                EmployeeId = user.EmployeeId,
-                EmployeeName = user.FullName,
-                LoginTime = IndianTime.Now.ToString("HH:mm:ss"),
-            }, ct);
+                await _attendance.AddAsync(new Attendance
+                {
+                    Date = today,
+                    EmployeeId = user.EmployeeId,
+                    EmployeeName = user.FullName,
+                    LoginTime = IndianTime.Now.ToString("HH:mm:ss"),
+                }, ct);
+            }
+        }
+        catch
+        {
+            // Attendance logging must never block login.
         }
 
         return Ok(new AuthResponse
@@ -177,28 +184,7 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
-        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
-        var employee = await _employees.GetByEmailAsync(email, ct);
-        var employeeId = employee?.EmployeeId
-            ?? User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value
-            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
-
-        var today = IndianTime.TodayString();
-        var record = await _attendance.GetTodayAsync(employeeId, today, ct);
-        if (record is not null && string.IsNullOrWhiteSpace(record.LogoutTime))
-        {
-            var now = IndianTime.Now;
-            record.LogoutTime = now.ToString("HH:mm:ss");
-
-            if (TimeSpan.TryParse(record.LoginTime, out var loginTs))
-            {
-                var worked = now.TimeOfDay - loginTs;
-                if (worked < TimeSpan.Zero) worked = TimeSpan.Zero;
-                record.TotalHours = $"{(int)worked.TotalHours}h {worked.Minutes}m";
-            }
-
-            await _attendance.UpdateAsync(record, ct);
-        }
+        await StampAttendanceAsync(ct);
 
         await _activity.LogAsync(new ActivityLog
         {
@@ -208,5 +194,49 @@ public class AuthController : ControllerBase
         }, ct);
 
         return Ok(new { message = "Logged out." });
+    }
+
+    // ── Heartbeat ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Called periodically by the frontend (every few minutes) while a user is
+    /// active. Keeps "Logout Time" / "Total Hours" up to date as a "last seen"
+    /// value, so attendance is still accurate even if the user closes the tab
+    /// without clicking Logout.
+    /// </summary>
+    [Authorize]
+    [HttpPost("heartbeat")]
+    public async Task<IActionResult> Heartbeat(CancellationToken ct)
+    {
+        await StampAttendanceAsync(ct);
+        return Ok();
+    }
+
+    /// <summary>Updates today's attendance row with the current time as Logout Time + Total Hours.</summary>
+    private async Task StampAttendanceAsync(CancellationToken ct)
+    {
+        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
+        var employee = await _employees.GetByEmailAsync(email, ct);
+        var employeeId = employee?.EmployeeId
+            ?? User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "";
+
+        if (string.IsNullOrWhiteSpace(employeeId)) return;
+
+        var today = IndianTime.TodayString();
+        var record = await _attendance.GetTodayAsync(employeeId, today, ct);
+        if (record is null || string.IsNullOrWhiteSpace(record.LoginTime)) return;
+
+        var now = IndianTime.Now;
+        record.LogoutTime = now.ToString("HH:mm:ss");
+
+        if (TimeSpan.TryParse(record.LoginTime, out var loginTs))
+        {
+            var worked = now.TimeOfDay - loginTs;
+            if (worked < TimeSpan.Zero) worked = TimeSpan.Zero;
+            record.TotalHours = $"{(int)worked.TotalHours}h {worked.Minutes}m";
+        }
+
+        await _attendance.UpdateAsync(record, ct);
     }
 }
