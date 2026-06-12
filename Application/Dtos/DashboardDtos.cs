@@ -7,6 +7,8 @@ public class DashboardStatsDto
     public int FollowUpsDue { get; set; }
     public int Converted { get; set; }
     public int Rejected { get; set; }
+    public int UnassignedLeads { get; set; }
+    public int LeadsToday { get; set; }
 
     /// <summary>Status -> count, for the doughnut chart.</summary>
     public Dictionary<string, int> ByStatus { get; set; } = new();

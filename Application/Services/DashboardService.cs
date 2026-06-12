@@ -28,7 +28,9 @@ public class DashboardService
             FollowUpsDue = leads.Count(l =>
                 DateTime.TryParse(l.FollowUpDate, out var d) && d.Date <= today &&
                 !l.Status.Equals("Converted", StringComparison.OrdinalIgnoreCase) &&
-                !l.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase))
+                !l.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase)),
+            UnassignedLeads = leads.Count(l => string.IsNullOrWhiteSpace(l.AssignedEmployee)),
+            LeadsToday = leads.Count(l => DateTime.TryParse(l.DateAdded, out var da) && da.Date == today)
         };
 
         dto.ByStatus = leads.GroupBy(l => string.IsNullOrWhiteSpace(l.Status) ? "Unknown" : l.Status)
