@@ -30,7 +30,15 @@ public class DashboardService
                 !l.Status.Equals("Converted", StringComparison.OrdinalIgnoreCase) &&
                 !l.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase)),
             UnassignedLeads = leads.Count(l => string.IsNullOrWhiteSpace(l.AssignedEmployee)),
-            LeadsToday = leads.Count(l => DateTime.TryParse(l.DateAdded, out var da) && da.Date == today)
+            LeadsToday = leads.Count(l => DateTime.TryParse(l.DateAdded, out var da) && da.Date == today),
+            SiteVisits = leads.Count(l => l.Status.Equals("Site Visit", StringComparison.OrdinalIgnoreCase)),
+            SiteVisitsToday = leads.Count(l => l.Status.Equals("Site Visit", StringComparison.OrdinalIgnoreCase)
+                && DateTime.TryParse(l.LastUpdated, out var lu) && lu.Date == today),
+            DuplicateLeads = leads
+                .Where(l => !string.IsNullOrWhiteSpace(l.MobileNumber))
+                .GroupBy(l => new string(l.MobileNumber.Where(char.IsDigit).ToArray()))
+                .Where(g => g.Key.Length > 0 && g.Count() > 1)
+                .Sum(g => g.Count())
         };
 
         dto.ByStatus = leads.GroupBy(l => string.IsNullOrWhiteSpace(l.Status) ? "Unknown" : l.Status)
@@ -72,6 +80,7 @@ public class DashboardService
     public async Task<List<EmployeePerformanceDto>> GetEmployeePerformanceAsync(CancellationToken ct = default)
     {
         var leads = await _leads.GetAllAsync(ct);
+        var today = IndianTime.Today;
         return leads
             .Where(l => !string.IsNullOrWhiteSpace(l.AssignedEmployee))
             .GroupBy(l => l.AssignedEmployee)
@@ -79,10 +88,19 @@ public class DashboardService
             {
                 var total = g.Count();
                 var converted = g.Count(l => l.Status.Equals("Converted", StringComparison.OrdinalIgnoreCase));
+                var notEngaged = new[] { "New", "Assigned", "" };
+                var called = g.Count(l => !notEngaged.Contains(l.Status, StringComparer.OrdinalIgnoreCase));
+                var pending = g.Count(l =>
+                    DateTime.TryParse(l.FollowUpDate, out var d) && d.Date <= today &&
+                    !l.Status.Equals("Converted", StringComparison.OrdinalIgnoreCase) &&
+                    !l.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase));
                 return new EmployeePerformanceDto
                 {
                     Employee = g.Key,
                     Total = total,
+                    Called = called,
+                    PendingFollowUps = pending,
+                    SiteVisits = g.Count(l => l.Status.Equals("Site Visit", StringComparison.OrdinalIgnoreCase)),
                     Converted = converted,
                     Rejected = g.Count(l => l.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase)),
                     ConversionRate = total == 0 ? 0 : Math.Round(converted * 100.0 / total, 1)

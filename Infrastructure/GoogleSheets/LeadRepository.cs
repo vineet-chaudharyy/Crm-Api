@@ -10,7 +10,7 @@ public class LeadRepository : ILeadRepository
     private readonly GoogleSheetsClient _client;
     private readonly string? _entitySheetId; // per-entity override (null = use effective default)
     private readonly string _tab;
-    private const int ColCount = 14; // A..N
+    private const int ColCount = 17; // A..Q
 
     // Always evaluated fresh — picks up SpreadsheetId saved via Settings UI
     private string SheetId => _client.ResolveSheetId(_entitySheetId);
@@ -25,7 +25,7 @@ public class LeadRepository : ILeadRepository
     public async Task<List<Lead>> GetAllAsync(CancellationToken ct = default)
     {
         await _client.EnsureLeadsSchemaAsync(ct);
-        var rows = await _client.ReadAsync(SheetId, _tab, "A2:N", ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:Q", ct);
         var leads = new List<Lead>();
         for (var i = 0; i < rows.Count; i++)
         {
@@ -109,6 +109,9 @@ public class LeadRepository : ILeadRepository
         AssignedEmployee = Cell(r, 11),
         Notes = Cell(r, 12),
         LastUpdated = Cell(r, 13),
+        Temperature = Cell(r, 14),
+        Budget = Cell(r, 15),
+        ProjectName = Cell(r, 16),
         RowNumber = rowNumber
     };
 
@@ -116,6 +119,7 @@ public class LeadRepository : ILeadRepository
     {
         l.LeadId, l.DateAdded, l.FullName, l.MobileNumber, l.EmailAddress,
         l.City, l.State, l.CompanyName, l.LeadSource, l.Status,
-        l.FollowUpDate, l.AssignedEmployee, l.Notes, l.LastUpdated
+        l.FollowUpDate, l.AssignedEmployee, l.Notes, l.LastUpdated,
+        l.Temperature, l.Budget, l.ProjectName
     };
 }

@@ -20,6 +20,9 @@ public class Lead
     public string AssignedEmployee { get; set; } = string.Empty; // L
     public string Notes { get; set; } = string.Empty;     // M
     public string LastUpdated { get; set; } = string.Empty; // N
+    public string Temperature { get; set; } = string.Empty; // O  (Hot / Warm / Cold)
+    public string Budget { get; set; } = string.Empty;      // P  (e.g. "80L", "1.2 Cr")
+    public string ProjectName { get; set; } = string.Empty; // Q  (property / project of interest)
 
     /// <summary>1-based row index in the sheet (not stored, used for update/delete).</summary>
     public int RowNumber { get; set; }

@@ -15,17 +15,20 @@ public class LeadsController : ControllerBase
 {
     private readonly ILeadRepository _leads;
     private readonly IActivityLogRepository _activity;
+    private readonly IReminderRepository _reminders;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly FacebookSyncService _fbSync;
 
     public LeadsController(
         ILeadRepository leads,
         IActivityLogRepository activity,
+        IReminderRepository reminders,
         IServiceScopeFactory scopeFactory,
         FacebookSyncService fbSync)
     {
         _leads = leads;
         _activity = activity;
+        _reminders = reminders;
         _scopeFactory = scopeFactory;
         _fbSync = fbSync;
     }
@@ -59,6 +62,8 @@ public class LeadsController : ControllerBase
             leads = leads.Where(l => l.Status.Equals(filter.Status, StringComparison.OrdinalIgnoreCase)).ToList();
         if (!string.IsNullOrWhiteSpace(filter.AssignedEmployee))
             leads = leads.Where(l => l.AssignedEmployee.Equals(filter.AssignedEmployee, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (filter.Unassigned == true)
+            leads = leads.Where(l => string.IsNullOrWhiteSpace(l.AssignedEmployee)).ToList();
         if (TryDate(filter.FromDate, out var from))
             leads = leads.Where(l => TryDate(l.DateAdded, out var d) && d >= from).ToList();
         if (TryDate(filter.ToDate, out var to))
@@ -160,16 +165,67 @@ public class LeadsController : ControllerBase
         var ok = await _leads.UpdateAsync(lead, ct);
         if (!ok) return StatusCode(500, new { message = "Transfer failed." });
 
+        // Move all of this lead's reminders/notes to the new owner so they appear
+        // in the new employee's task list (the lead row's own Notes/follow-up/etc.
+        // travel with the row automatically — this re-points the separate reminders).
+        var reminders = await _reminders.GetByLeadIdAsync(id, ct);
+        foreach (var rem in reminders)
+        {
+            rem.EmployeeId = dto.ToEmployeeId;
+            rem.EmployeeName = dto.ToEmployeeName;
+            await _reminders.UpdateAsync(rem, ct);
+        }
+
         await _activity.LogAsync(new ActivityLog
         {
             User = CurrentUser, Action = "Transferred", LeadId = id,
             Details = $"Lead transferred from '{previousEmployee}' → '{dto.ToEmployeeName}'" +
+                      $" ({reminders.Count} note(s)/reminder(s) moved)" +
                       (string.IsNullOrWhiteSpace(dto.Reason) ? "" : $" | Reason: {dto.Reason}")
         }, ct);
 
         FireMetaEvent(lead, previousStatus, "Assigned");
 
         return Ok(await _leads.GetByIdAsync(id, ct));
+    }
+
+    // ── GET /api/leads/{id}/history ───────────────────────────────────────────
+    // Full timeline for a lead (calls, messages, status changes, transfers).
+    // Keyed by Lead ID, so it stays with the lead after a transfer.
+    [HttpGet("{id}/history")]
+    public async Task<IActionResult> History(string id, CancellationToken ct)
+    {
+        var lead = await _leads.GetByIdAsync(id, ct);
+        if (lead is null) return NotFound();
+
+        // Employees may only view history for leads assigned to them.
+        if (!CurrentRole.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+            !lead.AssignedEmployee.Equals(CurrentName, StringComparison.OrdinalIgnoreCase) &&
+            !lead.AssignedEmployee.Equals(CurrentUser, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        var history = await _activity.GetByLeadIdAsync(id, ct);
+        return Ok(history);
+    }
+
+    // ── POST /api/leads/{id}/interaction ──────────────────────────────────────
+    // Records a call / WhatsApp / note interaction on a lead's timeline.
+    [HttpPost("{id}/interaction")]
+    public async Task<IActionResult> LogInteraction(string id, [FromBody] InteractionDto dto, CancellationToken ct)
+    {
+        var lead = await _leads.GetByIdAsync(id, ct);
+        if (lead is null) return NotFound();
+
+        var type = string.IsNullOrWhiteSpace(dto.Type) ? "Note" : dto.Type.Trim();
+        var detail = type + (string.IsNullOrWhiteSpace(dto.Outcome) ? "" : $": {dto.Outcome}");
+
+        await _activity.LogAsync(new ActivityLog
+        {
+            User = string.IsNullOrWhiteSpace(CurrentName) ? CurrentUser : CurrentName,
+            Action = type, LeadId = id, Details = detail
+        }, ct);
+
+        return Ok(new { message = "Logged." });
     }
 
     // ── POST /api/leads/import ────────────────────────────────────────────────
@@ -284,7 +340,8 @@ public class LeadsController : ControllerBase
         FullName = d.FullName, MobileNumber = d.MobileNumber, EmailAddress = d.EmailAddress,
         City = d.City, State = d.State, CompanyName = d.CompanyName, LeadSource = d.LeadSource,
         Status = string.IsNullOrWhiteSpace(d.Status) ? "New" : d.Status,
-        FollowUpDate = d.FollowUpDate, AssignedEmployee = d.AssignedEmployee, Notes = d.Notes
+        FollowUpDate = d.FollowUpDate, AssignedEmployee = d.AssignedEmployee, Notes = d.Notes,
+        Temperature = d.Temperature, Budget = d.Budget, ProjectName = d.ProjectName
     };
 
     private static List<string> SplitCsv(string line)

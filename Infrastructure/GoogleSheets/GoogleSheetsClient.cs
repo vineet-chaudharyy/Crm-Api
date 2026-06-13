@@ -25,7 +25,8 @@ public class GoogleSheetsClient
     {
         "Lead ID", "Date Added", "Full Name", "Mobile Number", "Email Address",
         "City", "State", "Company Name", "Lead Source", "Status",
-        "Follow Up Date", "Assigned Employee", "Notes", "Last Updated"
+        "Follow Up Date", "Assigned Employee", "Notes", "Last Updated",
+        "Temperature", "Budget", "Project"
     };
 
     public static readonly string[] EmployeeHeader =

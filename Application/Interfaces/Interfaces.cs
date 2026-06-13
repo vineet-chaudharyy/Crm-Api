@@ -26,6 +26,7 @@ public interface IActivityLogRepository
 {
     Task LogAsync(ActivityLog entry, CancellationToken ct = default);
     Task<List<ActivityLog>> GetRecentAsync(int count, CancellationToken ct = default);
+    Task<List<ActivityLog>> GetByLeadIdAsync(string leadId, CancellationToken ct = default);
 }
 
 public interface IJwtTokenService

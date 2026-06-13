@@ -51,6 +51,28 @@ public class ActivityLogRepository : IActivityLogRepository
         return list.Take(count).ToList();
     }
 
+    public async Task<List<ActivityLog>> GetByLeadIdAsync(string leadId, CancellationToken ct = default)
+    {
+        await _client.EnsureActivitySchemaAsync(ct);
+        var rows = await _client.ReadAsync(SheetId, _tab, "A2:E", ct);
+        var list = new List<ActivityLog>();
+        foreach (var r in rows)
+        {
+            if (r.Count == 0) continue;
+            if (!Cell(r, 3).Equals(leadId, StringComparison.OrdinalIgnoreCase)) continue;
+            list.Add(new ActivityLog
+            {
+                Timestamp = Cell(r, 0),
+                User = Cell(r, 1),
+                Action = Cell(r, 2),
+                LeadId = Cell(r, 3),
+                Details = Cell(r, 4)
+            });
+        }
+        list.Reverse(); // newest first
+        return list;
+    }
+
     private static string Cell(IList<object> r, int i) => i < r.Count ? r[i]?.ToString() ?? "" : "";
 }
 

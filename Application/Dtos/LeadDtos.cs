@@ -15,6 +15,16 @@ public class LeadUpsertDto
     public string FollowUpDate { get; set; } = string.Empty;
     public string AssignedEmployee { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
+    public string Temperature { get; set; } = string.Empty; // Hot / Warm / Cold
+    public string Budget { get; set; } = string.Empty;      // e.g. "80L", "1.2 Cr"
+    public string ProjectName { get; set; } = string.Empty; // property / project of interest
+}
+
+/// <summary>Body for POST /api/leads/{id}/interaction — log a call/message/note on the lead timeline.</summary>
+public class InteractionDto
+{
+    public string Type { get; set; } = "Note";     // Call / WhatsApp / Note
+    public string Outcome { get; set; } = string.Empty; // optional free-text result
 }
 
 /// <summary>Body for PUT /api/leads/{id}/transfer — move lead to another employee.</summary>
@@ -34,4 +44,5 @@ public class LeadFilterDto
     public string? AssignedEmployee { get; set; }
     public string? FromDate { get; set; }        // yyyy-MM-dd (DateAdded >=)
     public string? ToDate { get; set; }          // yyyy-MM-dd (DateAdded <=)
+    public bool? Unassigned { get; set; }        // true → only leads with no AssignedEmployee
 }
