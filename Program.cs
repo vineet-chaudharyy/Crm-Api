@@ -69,11 +69,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 // ---- CORS -------------------------------------------------------------------
+// Auth is via JWT bearer tokens (Authorization header), NOT cookies, so allowing
+// any origin is safe: a foreign site's JS still needs a valid token to get data,
+// and login requires valid credentials. Allowing any origin in code also makes
+// this immune to environment/config overrides on the host.
 const string CorsPolicy = "FrontendCors";
-var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-              ?? new[] { "http://localhost:5173" };
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy,
-    p => p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
+    p => p.SetIsOriginAllowed(_ => true).AllowAnyHeader().AllowAnyMethod()));
 
 // ---- MVC + Swagger (with JWT) ----------------------------------------------
 builder.Services.AddControllers();
