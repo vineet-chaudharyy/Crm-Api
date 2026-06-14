@@ -9,7 +9,7 @@ public class MetaEventRepository : IMetaEventRepository
 {
     private readonly GoogleSheetsClient _client;
     private readonly string? _entitySheetId;
-    private string SheetId => _client.ResolveSheetId(_entitySheetId);
+    private string SheetId => _client.ResolveEntitySheetId("MetaEvents", _entitySheetId);
     private readonly string _tab;
 
     public MetaEventRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)

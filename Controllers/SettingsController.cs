@@ -65,6 +65,7 @@ public class SettingsController : ControllerBase
                          (!string.IsNullOrWhiteSpace(_settings.GetCredentialsJson()) ||
                           System.IO.File.Exists(System.IO.Path.Combine(AppContext.BaseDirectory, _gsOpts.CredentialsPath)))
                     ? "Configured" : "Not configured",
+                EntitySpreadsheetIds = new Dictionary<string, string>(current.GoogleSheets.EntitySpreadsheetIds),
             },
             Meta = new MetaSettingsResponse
             {
@@ -95,8 +96,18 @@ public class SettingsController : ControllerBase
             if (err is not null) return BadRequest(new { message = err });
         }
 
-        await _settings.SaveGoogleSheetsAsync(req.SpreadsheetId, req.CredentialsJson);
+        await _settings.SaveGoogleSheetsAsync(req.SpreadsheetId, req.CredentialsJson, req.EntitySpreadsheetIds);
         return Ok(new { message = "Google Sheets settings saved. Reconnecting…" });
+    }
+
+    // ── DELETE /api/settings/google-sheets ────────────────────────────────────
+    // Disconnects the current sheet (clears the saved Spreadsheet ID). The CRM
+    // then falls back to the appsettings.json default sheet, if any.
+    [HttpDelete("google-sheets")]
+    public async Task<IActionResult> DisconnectGoogleSheets([FromQuery] bool clearCredentials, CancellationToken ct)
+    {
+        await _settings.DisconnectGoogleSheetsAsync(clearCredentials);
+        return Ok(new { message = "Google Sheet disconnected." });
     }
 
     // ── PUT /api/settings/meta ────────────────────────────────────────────────

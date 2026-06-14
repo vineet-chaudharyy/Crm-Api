@@ -57,7 +57,9 @@ public class SettingsService
 
     // ── Save Google Sheets ────────────────────────────────────────────────────
 
-    public async Task SaveGoogleSheetsAsync(string spreadsheetId, string credentialsJson)
+    public async Task SaveGoogleSheetsAsync(
+        string spreadsheetId, string credentialsJson,
+        Dictionary<string, string>? entitySpreadsheetIds = null)
     {
         await _lock.WaitAsync();
         try
@@ -68,9 +70,44 @@ public class SettingsService
             if (!string.IsNullOrWhiteSpace(credentialsJson))
                 _current.GoogleSheets.CredentialsJson = credentialsJson.Trim();
 
+            // Per-entity overrides — keep only non-blank entries
+            if (entitySpreadsheetIds is not null)
+            {
+                _current.GoogleSheets.EntitySpreadsheetIds = entitySpreadsheetIds
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value.Trim());
+            }
+
             await PersistAsync();
             SettingsChanged?.Invoke();
             _logger.LogInformation("Google Sheets settings saved. SpreadsheetId={Id}", spreadsheetId);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <summary>Saved per-entity sheet override (UI), or empty if none.</summary>
+    public string GetEntitySpreadsheetId(string entityKey)
+    {
+        var dict = _current.GoogleSheets.EntitySpreadsheetIds;
+        return dict != null && dict.TryGetValue(entityKey, out var id) && !string.IsNullOrWhiteSpace(id)
+            ? id : string.Empty;
+    }
+
+    // ── Disconnect Google Sheets ──────────────────────────────────────────────
+
+    /// <summary>Clears the saved Spreadsheet ID (and optionally credentials) so the
+    /// CRM falls back to the appsettings.json default sheet — or none if that is empty.</summary>
+    public async Task DisconnectGoogleSheetsAsync(bool clearCredentials = false)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            _current.GoogleSheets.SpreadsheetId = string.Empty;
+            if (clearCredentials) _current.GoogleSheets.CredentialsJson = string.Empty;
+
+            await PersistAsync();
+            SettingsChanged?.Invoke();
+            _logger.LogInformation("Google Sheets disconnected (saved SpreadsheetId cleared).");
         }
         finally { _lock.Release(); }
     }

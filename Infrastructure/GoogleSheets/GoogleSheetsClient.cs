@@ -111,6 +111,19 @@ public class GoogleSheetsClient
             ? EffectiveSpreadsheetId
             : entitySpecificId;
 
+    /// <summary>
+    /// Resolves the spreadsheet ID for a named data type, honouring (in priority):
+    ///   1. UI-saved per-entity override   2. appsettings per-entity ID
+    ///   3. UI-saved / appsettings default sheet (EffectiveSpreadsheetId)
+    /// </summary>
+    public string ResolveEntitySheetId(string entityKey, string? appsettingsEntityId)
+    {
+        var saved = _settingsService.GetEntitySpreadsheetId(entityKey);
+        if (!string.IsNullOrWhiteSpace(saved)) return saved;
+        if (!string.IsNullOrWhiteSpace(appsettingsEntityId)) return appsettingsEntityId;
+        return EffectiveSpreadsheetId;
+    }
+
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     private async Task<SheetsService> ServiceAsync(CancellationToken ct)
@@ -266,22 +279,22 @@ public class GoogleSheetsClient
     // ── Per-entity convenience methods ────────────────────────────────────────
 
     public Task EnsureLeadsSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.LeadsSpreadsheetId), new[] { (_opt.LeadsTab, LeadHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("Leads", _opt.LeadsSpreadsheetId), new[] { (_opt.LeadsTab, LeadHeader) }, ct);
 
     public Task EnsureEmployeesSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.EmployeesSpreadsheetId), new[] { (_opt.EmployeesTab, EmployeeHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("Employees", _opt.EmployeesSpreadsheetId), new[] { (_opt.EmployeesTab, EmployeeHeader) }, ct);
 
     public Task EnsureActivitySchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.ActivitySpreadsheetId), new[] { (_opt.ActivityTab, ActivityHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("Activity", _opt.ActivitySpreadsheetId), new[] { (_opt.ActivityTab, ActivityHeader) }, ct);
 
     public Task EnsureRemindersSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.RemindersSpreadsheetId), new[] { (_opt.RemindersTab, ReminderHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("Reminders", _opt.RemindersSpreadsheetId), new[] { (_opt.RemindersTab, ReminderHeader) }, ct);
 
     public Task EnsureAttendanceSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.AttendanceSpreadsheetId), new[] { (_opt.AttendanceTab, AttendanceHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("Attendance", _opt.AttendanceSpreadsheetId), new[] { (_opt.AttendanceTab, AttendanceHeader) }, ct);
 
     public Task EnsureMetaEventsSchemaAsync(CancellationToken ct) =>
-        EnsureSchemaAsync(ResolveSheetId(_opt.MetaEventsSpreadsheetId), new[] { (_opt.MetaEventsTab, MetaEventHeader) }, ct);
+        EnsureSchemaAsync(ResolveEntitySheetId("MetaEvents", _opt.MetaEventsSpreadsheetId), new[] { (_opt.MetaEventsTab, MetaEventHeader) }, ct);
 
     // ── Tab GID helper ────────────────────────────────────────────────────────
 

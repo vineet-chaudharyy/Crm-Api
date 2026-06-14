@@ -10,7 +10,7 @@ public class UserSettings
 
 public class GoogleSheetsSettings
 {
-    /// <summary>Google Spreadsheet ID from the sheet URL.</summary>
+    /// <summary>Google Spreadsheet ID from the sheet URL (default sheet for all data).</summary>
     public string SpreadsheetId { get; set; } = string.Empty;
 
     /// <summary>
@@ -18,6 +18,13 @@ public class GoogleSheetsSettings
     /// Admin pastes the JSON here; the API uses it directly without a file on disk.
     /// </summary>
     public string CredentialsJson { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional per-data-type sheet overrides. Key = entity ("Leads", "Employees",
+    /// "Reminders", "Activity", "Attendance", "MetaEvents"); value = Spreadsheet ID.
+    /// Blank/missing = use the default SpreadsheetId above.
+    /// </summary>
+    public Dictionary<string, string> EntitySpreadsheetIds { get; set; } = new();
 }
 
 public class MetaSettings
@@ -35,6 +42,8 @@ public class SaveGoogleSheetsSettingsRequest
 {
     public string SpreadsheetId   { get; set; } = string.Empty;
     public string CredentialsJson { get; set; } = string.Empty;
+    /// <summary>Optional per-data-type sheet overrides (entity → Spreadsheet ID).</summary>
+    public Dictionary<string, string>? EntitySpreadsheetIds { get; set; }
 }
 
 public class SaveMetaSettingsRequest
@@ -62,6 +71,7 @@ public class GoogleSheetsSettingsResponse
     public string SpreadsheetId     { get; set; } = string.Empty;
     public bool   CredentialsLinked { get; set; }   // true = credentials JSON is saved
     public string Status            { get; set; } = string.Empty; // "Configured" / "Not configured"
+    public Dictionary<string, string> EntitySpreadsheetIds { get; set; } = new();
 }
 
 public class MetaSettingsResponse

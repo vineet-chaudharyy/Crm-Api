@@ -13,7 +13,7 @@ public class LeadRepository : ILeadRepository
     private const int ColCount = 17; // A..Q
 
     // Always evaluated fresh — picks up SpreadsheetId saved via Settings UI
-    private string SheetId => _client.ResolveSheetId(_entitySheetId);
+    private string SheetId => _client.ResolveEntitySheetId("Leads", _entitySheetId);
 
     public LeadRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
     {

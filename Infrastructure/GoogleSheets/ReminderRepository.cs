@@ -8,7 +8,7 @@ public class ReminderRepository : IReminderRepository
 {
     private readonly GoogleSheetsClient _client;
     private readonly string? _entitySheetId;
-    private string SheetId => _client.ResolveSheetId(_entitySheetId);
+    private string SheetId => _client.ResolveEntitySheetId("Reminders", _entitySheetId);
     private readonly string _tab;
 
     public ReminderRepository(GoogleSheetsClient client, IOptions<GoogleSheetsOptions> opt)
